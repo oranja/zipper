@@ -61,7 +61,7 @@ namespace zipper {
 			}
 
 			fill_memory_filefunc(&m_filefunc, &m_zipmem);
-			
+
 			return initMemory(size > 0 ? APPEND_STATUS_CREATE : APPEND_STATUS_ADDINZIP, m_filefunc);
 		}
 

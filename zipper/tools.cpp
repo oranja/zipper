@@ -46,7 +46,7 @@ namespace zipper {
 
   bool isLargeFile(std::istream& input_stream)
   {
-    ZPOS64_T pos = 0;
+    std::streampos pos = 0;
     input_stream.seekg(0, std::ios::end);
     pos = input_stream.tellg();
     input_stream.seekg(0);

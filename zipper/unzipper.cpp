@@ -1,9 +1,11 @@
 #include "unzipper.h"
 #include "defs.h"
 #include "tools.h"
+#include "minizip/minishared.h"
 
 #include <functional>
 #include <exception>
+#include <sstream>
 #include <fstream>
 #include <stdexcept>
 
@@ -33,14 +35,17 @@ namespace zipper {
     {
       unz_file_info64 file_info = { 0 };
       char filename_inzip[256] = { 0 };
+      struct tm tmu_date = { 0 };
 
       int err = unzGetCurrentFileInfo64(m_zf, &file_info, filename_inzip, sizeof(filename_inzip), NULL, 0, NULL, 0);
       if (UNZ_OK != err)
         throw EXCEPTION_CLASS("Error, couln't get the current entry info");
 
-      return ZipEntry(std::string(filename_inzip), file_info.compressed_size, file_info.uncompressed_size,
-        file_info.tmu_date.tm_year, file_info.tmu_date.tm_mon, file_info.tmu_date.tm_mday,
-        file_info.tmu_date.tm_hour, file_info.tmu_date.tm_min, file_info.tmu_date.tm_sec, file_info.dosDate);
+      dosdate_to_tm(file_info.dos_date, &tmu_date);
+
+      return ZipEntry(std::string(filename_inzip),
+        file_info.compressed_size, file_info.uncompressed_size,
+        tmu_date);
     }
 
 #if 0
@@ -131,7 +136,7 @@ namespace zipper {
         if (UNZ_OK != err)
         {
           std::stringstream str;
-          str << "Error " << err << " openinginternal file '" 
+          str << "Error " << err << " openinginternal file '"
               << entryinfo.name << "' in zip";
 
           throw EXCEPTION_CLASS(str.str().c_str());
@@ -155,7 +160,7 @@ namespace zipper {
         if (UNZ_OK != err)
         {
           std::stringstream str;
-          str << "Error " << err << " opening internal file '" 
+          str << "Error " << err << " opening internal file '"
               << entryinfo.name << "' in zip";
 
           throw EXCEPTION_CLASS(str.str().c_str());
@@ -179,7 +184,7 @@ namespace zipper {
         if (UNZ_OK != err)
         {
           std::stringstream str;
-          str << "Error " << err << " opening internal file '" 
+          str << "Error " << err << " opening internal file '"
               << entryinfo.name << "' in zip";
 
           throw EXCEPTION_CLASS(str.str().c_str());
@@ -189,38 +194,28 @@ namespace zipper {
       return UNZ_OK == err;
     }
 
-    void changeFileDate(const std::string& filename, uLong dosdate, tm_unz tmu_date)
+    void changeFileDate(const std::string& filename, struct tm tmu_date)
     {
 #ifdef _WIN32
       HANDLE hFile;
-      FILETIME ftm, ftLocal, ftCreate, ftLastAcc, ftLastWrite;
+      FILETIME ftm, ftCreate, ftLastAcc, ftLastWrite;
+      uint32_t dos_date;
 
       hFile = CreateFileA(filename.c_str(), GENERIC_READ | GENERIC_WRITE, 0, NULL, OPEN_EXISTING, 0, NULL);
       if (hFile != INVALID_HANDLE_VALUE)
       {
+        dos_date = tm_to_dosdate(tmu_date);
+        DosDateTimeToFileTime((WORD)(dos_date >> 16), (WORD)dos_date, &ftm);
+
         GetFileTime(hFile, &ftCreate, &ftLastAcc, &ftLastWrite);
-        DosDateTimeToFileTime((WORD)(dosdate >> 16), (WORD)dosdate, &ftLocal);
-        LocalFileTimeToFileTime(&ftLocal, &ftm);
         SetFileTime(hFile, &ftm, &ftLastAcc, &ftm);
         CloseHandle(hFile);
       }
 #else
 #if defined unix || defined __APPLE__
       struct utimbuf ut;
-      struct tm newdate;
 
-      newdate.tm_sec = tmu_date.tm_sec;
-      newdate.tm_min = tmu_date.tm_min;
-      newdate.tm_hour = tmu_date.tm_hour;
-      newdate.tm_mday = tmu_date.tm_mday;
-      newdate.tm_mon = tmu_date.tm_mon;
-      if (tmu_date.tm_year > 1900)
-        newdate.tm_year = tmu_date.tm_year - 1900;
-      else
-        newdate.tm_year = tmu_date.tm_year;
-      newdate.tm_isdst = -1;
-
-      ut.actime = ut.modtime = mktime(&newdate);
+      ut.actime = ut.modtime = timegm(&tmu_date);
       utime(filename.c_str(), &ut);
 #endif
 #endif
@@ -245,10 +240,7 @@ namespace zipper {
         output_file.close();
 
         /* Set the time of the file that has been unzipped */
-        tm_unz timeaux;
-        memcpy(&timeaux, &info.unixdate, sizeof(timeaux));
-
-        changeFileDate(filename, info.dosdate, timeaux);
+        changeFileDate(filename, info.timestamp);
       }
       else
         output_file.close();
@@ -258,13 +250,13 @@ namespace zipper {
 
     int extractToStream(std::ostream& stream, ZipEntry& info)
     {
-      size_t err = UNZ_ERRNO;
+      int err = UNZ_ERRNO;
 
       err = unzOpenCurrentFilePassword(m_zf, m_outer.m_password.c_str());
       if (UNZ_OK != err)
       {
         std::stringstream str;
-        str << "Error " << err << " opening internal file '" 
+        str << "Error " << err << " opening internal file '"
             << info.name << "' in zip";
 
         throw EXCEPTION_CLASS(str.str().c_str());
@@ -276,7 +268,7 @@ namespace zipper {
       do
       {
         err = unzReadCurrentFile(m_zf, buffer.data(), (unsigned int)buffer.size());
-        if (err < 0 || err == 0)
+        if (err < 0 /*error*/ || err == 0 /*eof*/)
           break;
 
         stream.write(buffer.data(), err);
@@ -290,18 +282,18 @@ namespace zipper {
 
       stream.flush();
 
-      return (int)err;
+      return err;
     }
 
     int extractToMemory(std::vector<unsigned char>& outvec, ZipEntry& info)
     {
-      size_t err = UNZ_ERRNO;
+      int err = UNZ_ERRNO;
 
       err = unzOpenCurrentFilePassword(m_zf, m_outer.m_password.c_str());
       if (UNZ_OK != err)
       {
         std::stringstream str;
-        str << "Error " << err << " opening internal file '" 
+        str << "Error " << err << " opening internal file '"
             << info.name << "' in zip";
 
         throw EXCEPTION_CLASS(str.str().c_str());
@@ -315,14 +307,14 @@ namespace zipper {
       do
       {
         err = unzReadCurrentFile(m_zf, buffer.data(), (unsigned int)buffer.size());
-        if (err < 0 || err == 0)
+        if (err < 0 /*error*/ || err == 0 /*eof*/)
           break;
 
         outvec.insert(outvec.end(), buffer.data(), buffer.data() + err);
 
       } while (err > 0);
 
-      return (int)err;
+      return err;
     }
 
   public:
@@ -391,7 +383,7 @@ namespace zipper {
       return entrylist;
     }
 
-    
+
 
     bool extractAll(const std::string& destination, const std::map<std::string, std::string>& alternativeNames)
     {
@@ -543,7 +535,7 @@ namespace zipper {
     return m_impl->extractAll(destination, alternativeNames);
   }
 
-  bool 
+  bool
   Unzipper::extract(const std::string& destination)
   {
     return m_impl->extractAll(destination, std::map<std::string, std::string>());
