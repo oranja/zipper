@@ -35,10 +35,6 @@ namespace zipper {
   private:
     std::string m_password;
     std::string m_zipname;
-    std::istream& m_ibuffer;
-    std::vector<unsigned char>& m_vecbuffer;
-    bool m_usingMemoryVector;
-    bool m_usingStream;
     bool m_open;
 
     struct Impl;

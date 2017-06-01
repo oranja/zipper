@@ -354,7 +354,7 @@ namespace zipper {
 
       if (size > 0)
       {
-        m_zipmem.base = new char[(size_t)size];
+        m_zipmem.base = new char[size];
         stream.read(m_zipmem.base, size);
       }
 
@@ -451,36 +451,24 @@ namespace zipper {
   };
 
   Unzipper::Unzipper(std::istream& zippedBuffer)
-    : m_ibuffer(zippedBuffer)
-    , m_vecbuffer(*(new std::vector<unsigned char>())) //not used but using local variable throws exception
-    , m_usingMemoryVector(false)
-    , m_usingStream(true)
-    , m_impl(new Impl(*this))
+    : m_impl(new Impl(*this))
   {
-    if (!m_impl->initWithStream(m_ibuffer))
+    if (!m_impl->initWithStream(zippedBuffer))
       throw EXCEPTION_CLASS("Error loading zip in memory!");
     m_open = true;
   }
 
   Unzipper::Unzipper(std::vector<unsigned char>& zippedBuffer)
-    : m_ibuffer(*(new std::stringstream())) //not used but using local variable throws exception
-    , m_vecbuffer(zippedBuffer)
-    , m_usingMemoryVector(true)
-    , m_usingStream(false)
-    , m_impl(new Impl(*this))
+    : m_impl(new Impl(*this))
   {
-    if (!m_impl->initWithVector(m_vecbuffer))
+    if (!m_impl->initWithVector(zippedBuffer))
       throw EXCEPTION_CLASS("Error loading zip in memory!");
 
     m_open = true;
   }
 
   Unzipper::Unzipper(const std::string& zipname)
-    : m_ibuffer(*(new std::stringstream())) //not used but using local variable throws exception
-    , m_vecbuffer(*(new std::vector<unsigned char>())) //not used but using local variable throws exception
-    , m_zipname(zipname)
-    , m_usingMemoryVector(false)
-    , m_usingStream(false)
+    : m_zipname(zipname)
     , m_impl(new Impl(*this))
   {
     if (!m_impl->initFile(zipname))
@@ -490,12 +478,8 @@ namespace zipper {
   }
 
   Unzipper::Unzipper(const std::string& zipname, const std::string& password)
-    : m_ibuffer(*(new std::stringstream())) //not used but using local variable throws exception
-    , m_vecbuffer(*(new std::vector<unsigned char>())) //not used but using local variable throws exception
-    , m_zipname(zipname)
+    : m_zipname(zipname)
     , m_password(password)
-    , m_usingMemoryVector(false)
-    , m_usingStream(false)
     , m_impl(new Impl(*this))
   {
     if (!m_impl->initFile(zipname))

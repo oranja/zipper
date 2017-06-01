@@ -2,7 +2,6 @@
 
 #include <iostream>
 #include <string>
-#include <sstream>
 #include <vector>
 #include <memory>
 
@@ -31,10 +30,9 @@ namespace zipper {
 	private:
 		std::string m_password;
 		std::string m_zipname;
-		std::iostream& m_obuffer;
-		std::vector<unsigned char>& m_vecbuffer;
-		bool m_usingMemoryVector;
-		bool m_usingStream;
+		std::iostream* m_obuffer;
+		std::vector<unsigned char>* m_vecbuffer;
+        enum Mode { FileMode, StreamMode, BufferMode } m_mode;
 		bool m_open;
 
 		struct Impl;

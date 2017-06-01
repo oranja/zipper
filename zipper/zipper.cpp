@@ -3,6 +3,7 @@
 #include "tools.h"
 #include "CDirEntry.h"
 
+#include <cstring> //memset
 #include <fstream>
 #include <stdexcept>
 
@@ -15,11 +16,16 @@ namespace zipper {
 		ourmemory_t m_zipmem;
 		zlib_filefunc_def m_filefunc;
 
-		Impl(Zipper& outer) : m_outer(outer), m_zipmem(), m_filefunc()
+		Impl(Zipper& outer) : m_outer(outer), m_zf(NULL)
 		{
-			m_zf = NULL;
-			//m_filefunc = { 0 };
+            std::memset(&m_zipmem, 0, sizeof(ourmemory_t));
+            std::memset(&m_filefunc, 0, sizeof(zlib_filefunc_def));
 		}
+
+        ~Impl()
+        {
+            close();
+        }
 
 		bool initFile(const std::string& filename)
 		{
@@ -46,18 +52,20 @@ namespace zipper {
 			return NULL != m_zf;
 		}
 
-		bool initWithStream(std::iostream& stream)
+		bool initWithStream(std::iostream* stream)
 		{
+            if (NULL == stream) return false;
+
 			m_zipmem.grow = 1;
 
-			stream.seekg(0, std::ios::end);
-			size_t size = (size_t)stream.tellg();
-			stream.seekg(0);
+			stream->seekg(0, std::ios::end);
+			size_t size = (size_t)stream->tellg();
+			stream->seekg(0);
 
 			if (size > 0)
 			{
 				m_zipmem.base = new char[(size_t)size];
-				stream.read(m_zipmem.base, size);
+				stream->read(m_zipmem.base, size);
 			}
 
 			fill_memory_filefunc(&m_filefunc, &m_zipmem);
@@ -65,20 +73,22 @@ namespace zipper {
 			return initMemory(size > 0 ? APPEND_STATUS_CREATE : APPEND_STATUS_ADDINZIP, m_filefunc);
 		}
 
-		bool initWithVector(std::vector<unsigned char>& buffer)
+		bool initWithVector(std::vector<unsigned char>* buffer)
 		{
+            if (NULL == buffer) return false;
+
 			m_zipmem.grow = 1;
 
-			if (!buffer.empty())
+			if (!buffer->empty())
 			{
-				m_zipmem.base = new char[buffer.size()];
-				memcpy(m_zipmem.base, (char*)buffer.data(), buffer.size());
-				m_zipmem.size = (uLong)buffer.size();
+				m_zipmem.base = new char[buffer->size()];
+				memcpy(m_zipmem.base, (char*)buffer->data(), buffer->size());
+				m_zipmem.size = (uLong)buffer->size();
 			}
 
 			fill_memory_filefunc(&m_filefunc, &m_zipmem);
 
-			return initMemory(buffer.empty() ? APPEND_STATUS_CREATE : APPEND_STATUS_ADDINZIP, m_filefunc);
+			return initMemory(buffer->empty() ? APPEND_STATUS_CREATE : APPEND_STATUS_ADDINZIP, m_filefunc);
 		}
 
 		bool initMemory(int mode, zlib_filefunc_def& filefunc)
@@ -168,22 +178,26 @@ namespace zipper {
 
 		void close()
 		{
-			if (m_zf)
-				zipClose(m_zf, NULL);
+			if (NULL != m_zf) {
+                zipClose(m_zf, NULL);
+                m_zf = NULL;
+            }
 
 			if (m_zipmem.base && m_zipmem.limit > 0)
 			{
-				if (m_outer.m_usingMemoryVector)
+				if (m_outer.m_mode == BufferMode)
 				{
-					m_outer.m_vecbuffer.resize(m_zipmem.limit);
-					m_outer.m_vecbuffer.assign(m_zipmem.base, m_zipmem.base + m_zipmem.limit);
+					m_outer.m_vecbuffer->resize(m_zipmem.limit);
+					m_outer.m_vecbuffer->assign(m_zipmem.base, m_zipmem.base + m_zipmem.limit);
 				}
 
-				else if (m_outer.m_usingStream)
-					m_outer.m_obuffer.write(m_zipmem.base, m_zipmem.limit);
+				else if (m_outer.m_mode == StreamMode)
+					m_outer.m_obuffer->write(m_zipmem.base, m_zipmem.limit);
 			}
 
-			free(m_zipmem.base);
+			delete [] m_zipmem.base;
+            std::memset(&m_zipmem, 0, sizeof(ourmemory_t));
+            std::memset(&m_filefunc, 0, sizeof(zlib_filefunc_def));
 		}
 	};
 
@@ -191,10 +205,9 @@ namespace zipper {
 	///////////////////////////////////////////////////////////////////////////////
 
 	Zipper::Zipper(const std::string& zipname)
-		: m_obuffer(*(new std::stringstream())) //not used but using local variable throws exception
-		, m_vecbuffer(*(new std::vector<unsigned char>())) //not used but using local variable throws exception
-		, m_usingMemoryVector(false)
-		, m_usingStream(false)
+		: m_obuffer(NULL)
+        , m_vecbuffer(NULL)
+        , m_mode(FileMode)
 		, m_zipname(zipname)
 		, m_impl(new Impl(*this))
 	{
@@ -205,10 +218,9 @@ namespace zipper {
 	}
 
 	Zipper::Zipper(const std::string& zipname, const std::string& password)
-		: m_obuffer(*(new std::stringstream())) //not used but using local variable throws exception
-		, m_vecbuffer(*(new std::vector<unsigned char>())) //not used but using local variable throws exception
-		, m_usingMemoryVector(false)
-		, m_usingStream(false)
+        : m_obuffer(NULL)
+        , m_vecbuffer(NULL)
+        , m_mode(FileMode)
 		, m_zipname(zipname)
 		, m_password(password)
 		, m_impl(new Impl(*this))
@@ -220,10 +232,9 @@ namespace zipper {
 	}
 
 	Zipper::Zipper(std::iostream& buffer)
-		: m_vecbuffer(*(new std::vector<unsigned char>())) //not used but using local variable throws exception
-		, m_obuffer(buffer)
-		, m_usingMemoryVector(false)
-		, m_usingStream(true)
+		: m_obuffer(&buffer)
+        , m_vecbuffer(NULL)
+        , m_mode(StreamMode)
 		, m_impl(new Impl(*this))
 	{
 		if (!m_impl->initWithStream(m_obuffer))
@@ -233,10 +244,9 @@ namespace zipper {
 	}
 
 	Zipper::Zipper(std::vector<unsigned char>& buffer)
-		: m_vecbuffer(buffer)
-		, m_obuffer(*(new std::stringstream())) //not used but using local variable throws exception
-		, m_usingMemoryVector(true)
-		, m_usingStream(false)
+		: m_obuffer(NULL)
+        , m_vecbuffer(&buffer)
+        , m_mode(BufferMode)
 		, m_impl(new Impl(*this))
 	{
 		if (!m_impl->initWithVector(m_vecbuffer))
@@ -248,6 +258,8 @@ namespace zipper {
 	Zipper::~Zipper(void)
 	{
 		close();
+
+        delete m_impl;
 	}
 
 	bool Zipper::add(std::istream& source, const std::string& nameInZip, zipFlags flags)
@@ -285,12 +297,12 @@ namespace zipper {
 	{
 		if (!m_open)
 		{
-			if (m_usingMemoryVector)
+			if (m_mode == BufferMode)
 			{
 				if (!m_impl->initWithVector(m_vecbuffer))
 					throw EXCEPTION_CLASS("Error opening zip memory!");
 			}
-			else if (m_usingStream)
+			else if (m_mode == StreamMode)
 			{
 				if (!m_impl->initWithStream(m_obuffer))
 					throw EXCEPTION_CLASS("Error opening zip memory!");
@@ -310,6 +322,7 @@ namespace zipper {
 		if (m_open)
 		{
 			m_impl->close();
+
 			m_open = false;
 		}
 	}
